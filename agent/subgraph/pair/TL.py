@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pyexpat.errors import messages
 
@@ -133,22 +134,22 @@ async def tl_analyze_node(state: AgentState):
         tags=["additional_info"]
     )
     current_count = state.current_count
-    logger.info(f"Current count: {state.question}")
+    logger.info(f"Current count: {state.questions}")
     if current_count >= 2:
-        return {"message":state.question}
+        return {"message":state.questions}
 
     # 1. 调用结构化 LLM 进行检测
     messages = [{"role": "system", "content": TL_CHECKER_SYSTEM_PROMPT},
-                {"role":"human","content": "以下是用户对话："+ state.question}]
+                {"role":"human","content": "以下是用户对话："+ str(state.questions)}]
     structured_llm = model.with_structured_output(TLCheckOutput, method="json_mode")
     check_result = await structured_llm.ainvoke(messages)
 
     # 2. 如果信息充足，直接返回检测结果，让子图去跑生成 TC 的节点
     if check_result.is_info_sufficient:
         return {
-            "is_info_sufficient": True,
+            #"is_info_sufficient": True,
             "messages": state.messages,
-            "question": state.question,
+            "questions": state.questions,
         }
 
     # 3. 如果信息不充足，根据 JSON 手动构建回复文本（不费 Token）
@@ -184,7 +185,12 @@ def decide_next_step(state: TLState):
     # 否则，因为消息已经生成在 messages 里的，直接结束本轮等用户回复
     return "wait_for_user"
 
-async def tl_rewrite_node(state: TLState):
+async def tl_rewrite_node(state: AgentState):
+
+    q=["Deliver a concise, structured progress update for assigned tasks, clearly articulating completion status, obstacles and potential solutions in line with the group’s project timeline.",
+       "Identify specific interdisciplinary knowledge/resource gaps in their project team through guided discussion, and link gaps to current project progress bottlenecks.",
+       "Apply practical strategies for knowledge complementation and resource sharing in interdisciplinary teams, and co-create a group actionable plan for immediate implementation."]
+    state.questions=q
     if state.current_count >= 2:
         return {"messages": AIMessage(content="抱歉老师，录入的信息暂无法识别。已为您返回主菜单，请尝试重新描述您的的要求。"),
             "current_task": None,
@@ -200,63 +206,82 @@ async def tl_rewrite_node(state: TLState):
         temperature=0.3,  # 降低随机性，保证引导的专业性
         tags=["additional_info"])
 
-    response = await model.ainvoke([{"role": "system", "content": TL_REWRITE_SYSTEM_PROMPT},
-                                    {"role":"human","content": "以下是用户的ILO："+ state.question}] )
 
-    logger.info(f"Rewrite response: {response.content}")
+    # 1. 定义一个内部协程函数，用于单个 question 的处理
+    async def process_question(q):
+        # 这里的 q 转换 str 是为了防止之前报错的 FieldInfo 问题
+        q_text = str(q)
+        response = await model.ainvoke([
+            {"role": "system", "content": TL_REWRITE_SYSTEM_PROMPT},
+            {"role": "human", "content": f"以下是用户的ILO：{q_text}"}
+        ])
+        logger.info(f"Rewrite response: {response.content}")
+        # 根据你的原逻辑，这里返回的是 response.content 还是原 question？
+        # 原逻辑 append 的是 question，这里保持一致
+        return response.content
+
+        # 2. 使用 asyncio.gather 并发执行所有请求
+
+    # state.questions 必须是可迭代的
+    tasks = [process_question(q) for q in state.questions]
+    divided_questions = await asyncio.gather(*tasks)
+
+    logger.info(f"Divided questions: {divided_questions}")
 
     return {
-        "is_info_sufficient": True,
-        "question": response.content,
+        #"is_info_sufficient": True,
+        "questions": divided_questions,  # 确保是列表格式
     }
 
 
 
-async def tl_retrieve_node(state: TLState):
+async def tl_retrieve_node(state: AgentState):
+    documents=[]
+    logger.info(f"Divided questions: {state.questions}")
+    for query_text in state.questions:
 
 
-    query_text = state.question
-    queries=query_text.split("|")
-    logger.info(f"\n正在查询内容: '{query_text}'，请耐心等待")
-    # 1. 连接 Milvus
-    connections.connect("default", host="localhost", port="19530")
-    collection = Collection("EducationModules")
-    collection.load()
+        queries=query_text.split("|")
+        logger.info(f"\n正在查询内容: '{query_text}'，请耐心等待")
+        # 1. 连接 Milvus
+        connections.connect("default", host="localhost", port="19530")
+        collection = Collection("EducationModules")
+        collection.load()
 
-    dense_embeddings = HuggingFaceEmbeddings(
-        model_name="BAAI/bge-small-zh-v1.5",
-        model_kwargs={'device': 'cpu'},
-        encode_kwargs={'normalize_embeddings': True}
-    )
-    documents = []
-    for query in queries:
-
-        query_vector = dense_embeddings.embed_query(query)
-        metric_type="COSINE"
-        search_params = {"metric_type": metric_type, "params": {"nprobe": 10}}
-        results = collection.search(
-        data=[query_vector],  # 用第一条数据的向量查自己
-        anns_field="ilo_vector",
-        param=search_params,
-        limit=3,
-        output_fields=["ilo", "tc"]
+        dense_embeddings = HuggingFaceEmbeddings(
+            model_name="BAAI/bge-small-zh-v1.5",
+            model_kwargs={'device': 'cpu'},
+            encode_kwargs={'normalize_embeddings': True}
         )
 
-        for hits in results:
-            for hit in hits:
-                logger.info("-" * 30)
-                logger.info(f"{metric_type}: {hit.distance:.4f}")
-                if hit.distance >=5:
-                    continue
-                logger.info(f"ILO 内容: {hit.entity.get('ilo')}")
-                logger.info(f"TC 内容: {hit.entity.get('tc')}...") # 截取前100字展示
-                documents.append({"ILO":hit.entity.get('ilo'),
-                              "TC":hit.entity.get('tc')})
+        for query in queries:
 
+            query_vector = dense_embeddings.embed_query(query)
+            metric_type="COSINE"
+            search_params = {"metric_type": metric_type, "params": {"nprobe": 10}}
+            results = collection.search(
+            data=[query_vector],  # 用第一条数据的向量查自己
+            anns_field="ilo_vector",
+            param=search_params,
+            limit=3,
+            output_fields=["ilo", "tc"]
+            )
+
+            for hits in results:
+                for hit in hits:
+                    logger.info("-" * 30)
+                    logger.info(f"{metric_type}: {hit.distance:.4f}")
+                    if hit.distance >=5:
+                        continue
+                    logger.info(f"ILO 内容: {hit.entity.get('ilo')}")
+                    logger.info(f"TC 内容: {hit.entity.get('tc')}...") # 截取前100字展示
+                    documents.append({"ILO":hit.entity.get('ilo'),
+                                  "TC":hit.entity.get('tc')})
+    logger.info("查到的文档："+str(documents))
     return {
-        "is_info_sufficient": True,
+        #"is_info_sufficient": True,
         "messages": state.messages,
-        "question": state.question,
+        "questions": state.questions,
         "documents": documents
     }
 

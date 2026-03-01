@@ -466,22 +466,22 @@ async def dummy_node(state: AgentState) -> Dict:
 # 在 builder 中这样注册
 # Literal[
 #     "respond_to_general_query", "get_additional_info", "create_concept_query", "create_tl_generation", "create_image_query", "create_file_query", "create_project_generation", "create_rubric_generation"]:
-builder.add_node("query_rewrite", query_rewrite)
-builder.add_node("router", analyze_and_route_query)
-builder.add_node("respond_to_general_query", respond_to_general_query)
-builder.add_node("create_concept_query", create_concept_query)
+# builder.add_node("query_rewrite", query_rewrite)
+# builder.add_node("router", analyze_and_route_query)
+# builder.add_node("respond_to_general_query", respond_to_general_query)
+# builder.add_node("create_concept_query", create_concept_query)
 builder.add_node("create_tl_generation", tl_graph)
-builder.add_node("create_project_generation", dummy_node)
-builder.add_node("create_rubric_generation", dummy_node)
-builder.add_node("create_image_query", dummy_node)
-builder.add_node("create_file_query", dummy_node)
-builder.add_node("get_additional_info", get_additional_info)
+# builder.add_node("create_project_generation", dummy_node)
+# builder.add_node("create_rubric_generation", dummy_node)
+# builder.add_node("create_image_query", dummy_node)
+# builder.add_node("create_file_query", dummy_node)
+# builder.add_node("get_additional_info", get_additional_info)
 
 
 # 添加边
-builder.add_edge(START, "query_rewrite")
-builder.add_edge("query_rewrite", "router")
-builder.add_edge("router", END)
+builder.add_edge(START, "create_tl_generation")
+# builder.add_edge("query_rewrite", "router")
+builder.add_edge("create_tl_generation", END)
 
 graph = builder.compile(checkpointer=checkpointer)
 

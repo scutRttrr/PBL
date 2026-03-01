@@ -272,12 +272,11 @@ async def process_query(query: str) -> None:
 
 async def main() -> None:
     input_func = builtins.input
-    while True:
-        query = input_func("> ")
-        if query.strip().lower() == "q":
-            print("Exiting...")
-            break
-        await process_query(query)
+    query = input_func("> ")
+    # if query.strip().lower() == "q":
+    #     print("Exiting...")
+    #     break
+    await process_query(query)
 
 
 
