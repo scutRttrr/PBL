@@ -108,6 +108,40 @@ def format_docs(docs: List[Document]) -> str:
     return "\n".join(formatted_docs)
 
 
+def validate_generation_tasks(tasks: list[dict]) -> str:
+    """
+    校验 PBL 任务列表中的生成任务冲突
+    逻辑：
+    1. 统计生成类任务的数量
+    2. 若 T&L-generation 与 rubric-generation 同时存在 -> fail
+    3. 若只有一个生成任务 -> 返回对应类型
+    4. 若只有问答任务 -> 返回默认执行路径
+    """
+    # 提取所有生成类任务的类型
+    gen_tasks = [t['type'] for t in tasks if t['type'] in ['T&L-generation', 'rubric-generation']]
+
+    # 转换为集合去重，方便判断
+    gen_set = set(gen_tasks)
+
+    # 校验逻辑
+    # 同时含有 rubric-generation 和 T&L-generation
+    if 'rubric-generation' in gen_set and 'T&L-generation' in gen_set:
+        return "fail"
+
+    # 只含有一个 T&L-generation
+    if 'T&L-generation' in gen_set and len(gen_set) == 1:
+        return "T&L-generation"
+
+    # 只含有一个 rubric-generation
+    if 'rubric-generation' in gen_set and len(gen_set) == 1:
+        return "rubric-generation"
+
+    # 如果没有生成任务（全是 concept-query 等问答）
+    return "pure-query"
+
+
+
+
 def interrupt(data: Dict[str, Any]) -> str:
     """中断函数，用于人工干预
 

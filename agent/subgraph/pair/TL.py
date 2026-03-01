@@ -291,21 +291,21 @@ async def tl_generate_tc_node(state: TLState):
 
 
 tl_workflow = StateGraph(AgentState)
-tl_workflow.add_node("analyze", tl_analyze_node)
+#tl_workflow.add_node("analyze", tl_analyze_node)
 tl_workflow.add_node("generate", tl_generate_tc_node)
 tl_workflow.add_node("rewrite", tl_rewrite_node)
 tool_node = ToolNode(tltools)
 tl_workflow.add_node("retrieve", tl_retrieve_node)
-tl_workflow.add_edge(START, "analyze")
+tl_workflow.add_edge(START, "rewrite")
 
-tl_workflow.add_conditional_edges(
-    "analyze",
-    decide_next_step,
-    {
-        "generate": "rewrite",
-        "wait_for_user": END  # 这里的 END 会把 analyze 节点生成的追问发给用户
-    }
-)
+# tl_workflow.add_conditional_edges(
+#     "analyze",
+#     decide_next_step,
+#     {
+#         "generate": "rewrite",
+#         "wait_for_user": END  # 这里的 END 会把 analyze 节点生成的追问发给用户
+#     }
+# )
 tl_workflow.add_edge("rewrite", "retrieve")
 tl_workflow.add_edge("retrieve", "generate")
 tl_workflow.add_edge("generate", END)

@@ -1,11 +1,15 @@
+import json
+
 from langchain_core.prompts import ChatPromptTemplate
 
 from agent.subgraph.pair.TL import tl_workflow, tl_graph
+from agent.utils import validate_generation_tasks
 from infrastructure.logger import get_logger
 from prompt_template import (
     ROUTER_SYSTEM_PROMPT,
     GET_ADDITIONAL_SYSTEM_PROMPT,
     GENERAL_QUERY_SYSTEM_PROMPT,
+    QUERY_REWRITE_PROMPT,
     GET_IMAGE_SYSTEM_PROMPT,
     GUARDRAILS_SYSTEM_PROMPT,
     RAGSEARCH_SYSTEM_PROMPT,
@@ -82,6 +86,55 @@ def _coerce_to_bool(value: Any, *, default: bool = False) -> bool:
     return bool(value)
 
 
+# 假设你已经定义好了前面的 QUERY_REWRITE_PROMPT
+async def query_rewrite(
+        state: AgentState
+) -> dict:
+    """
+    QueryRewrite 节点：负责指代消解、去噪、以及原子化拆分。
+    """
+
+    # 1. 准备上下文：取出最近的消息和历史 slots
+    query = state.messages[-1].content
+
+    # 2. 调用 LLM (推荐使用 bind_tools 或 format_instructions 确保 JSON 输出)
+    # 这里直接使用之前写的适配 PBL 的 Prompt
+
+
+    model = ChatOpenAI(
+        openai_api_key=settings.OPENAI_API_KEY,
+        model_name=settings.OPENAI_MODEL,
+        openai_api_base=settings.OPENAI_API_BASE,
+        temperature=0.7,
+        tags=["router"],
+    )
+
+    if not settings.OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY is not configured for router analysis.")
+    # 假设你使用的是带有 JSON Mode 的 LLM
+    response = await model.ainvoke( [
+                   {"role": "system", "content": QUERY_REWRITE_PROMPT},
+                    {"role": "human", "content": "以下是任务：\n"+query},
+               ])
+
+    try:
+        # 解析返回的 JSON
+        result = json.loads(response.content)
+        sub_questions = result.get("sub_questions", [])
+
+        logger.info("成功拆分任务----"+str(sub_questions))
+
+        # 4. 更新 State
+        # 将结果存入 state，后续 Router 节点会根据 sub_questions 的动词进行判断
+        return {
+            "questions": sub_questions,
+        }
+
+    except Exception as e:
+        # 解析失败的容错处理
+        logger.error("拆分任务失败，出现错误：----"+str(e))
+        return {"questions": query}
+
 async def analyze_and_route_query(
         state: AgentState, *, config: RunnableConfig
 ) -> dict[str, Router]:
@@ -98,97 +151,113 @@ async def analyze_and_route_query(
         dict[str, Router]: A dictionary containing the 'router' key with the classification result (classification type and logic).
     """
     current_task = state.current_task
-    question_text = state.messages[-1].content if state.messages else ""
+    #question_text = state.messages[-1].content if state.messages else ""
+    classifiers = []
+    sanitized_router =None
+    for  question_text in state.questions:
+        # if current_task and isinstance(current_task, str):
+        #     logger.info(f"------继续进行当前任务------- {current_task}")
+        #     return {"router": Router.model_validate({"type": current_task}),
+        #             "question": question_text}
 
-    if current_task and isinstance(current_task, str):
-        logger.info(f"------继续进行当前任务------- {current_task}")
-        return {"router": Router.model_validate({"type": current_task}),
-                "question": question_text}
+        classier = {"question": question_text}
 
-    if not settings.OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY is not configured for router analysis.")
-
-    model = ChatOpenAI(
-        openai_api_key=settings.OPENAI_API_KEY,
-        model_name=settings.OPENAI_MODEL,
-        openai_api_base=settings.OPENAI_API_BASE,
-        temperature=0.7,
-        tags=["router"],
-    )
-
-    # 拼接提示模版 + 用户的实时问题（包含历史上下文对话）
-    messages = [
-                   {"role": "system", "content": ROUTER_SYSTEM_PROMPT}
-               ] + state.messages
-    logger.info("-----Analyze user query type-----")
-    logger.info(f"History messages: {state.messages}")
-
-
-    heuristic_router = _heuristic_router(question_text)
-    fallback_router: Router = heuristic_router or Router(
-        type="concept-query",
-        logic="fallback: default to knowledge base routing",
-        question=question_text,
-    )
-
-    allowed_types: set[str] = {
-        "general-query",
-        "additional-query",
-        "concept-query",
-        "T&L-generation",
-        "project-generation",
-        "rubric-generation",
-        "image-query",
-        "file-query",
-    }
-    raw_response = ""
-    try:
-        raw_response = await model.ainvoke(messages)
-    except Exception as exc:
-        logger.warning("Router LLM failed: %s. Falling back to concept-query.", exc)
-        logger.error(f"！！！路由解析核心报错: {type(exc).__name__}: {exc}")
-
-        try:
-            debug_resp = await model.ainvoke(messages)
-            logger.info(f"--- 模型原始回帖 (Debug) ---: {debug_resp.content}")
-        except:
-            logger.warning("连原始回帖都拿不到，请检查网络或 API Key")
-
-    raw_response =  {"type":raw_response.content if raw_response.content in allowed_types else "general-query"}
-    response = raw_response if isinstance(raw_response, Router) else Router.model_validate(raw_response)
-    router_type = response.type
-    logic = response.logic or ""
-
-    if not router_type or router_type not in allowed_types:
-        logger.warning(
-            "Router returned invalid type `%s`; applying heuristic fallback.", router_type
+        model = ChatOpenAI(
+            openai_api_key=settings.OPENAI_API_KEY,
+            model_name=settings.OPENAI_MODEL,
+            openai_api_base=settings.OPENAI_API_BASE,
+            temperature=0.7,
+            tags=["router"],
         )
-        heuristic_router = _heuristic_router(question_text)
-        if heuristic_router:
-            sanitized = heuristic_router
-            if not sanitized.logic:
-                sanitized.logic = logic or ""
-            return {"router": sanitized}
-        return {
-            "router": Router(
-                type="concept-query",
-                logic=logic or "fallback: invalid router output",
-                question=question_text,
-            )
-        }
 
-    sanitized_router = Router(
-        type=router_type,
-        logic=logic,
-        question=response.question or question_text,
-        decision=response.decision,
-        confidence=response.confidence,
-        reasoning=response.reasoning,
-    )
+        # 拼接提示模版 + 用户的实时问题（包含历史上下文对话）
+        messages = [
+                       {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
+                       {"role": "human", "content": "要分类的任务："+question_text}
+                   ]
+        logger.info("-----Analyze user query type-----")
+        logger.info(f"History messages: {question_text}")
+
+
+        heuristic_router = _heuristic_router(question_text)
+        fallback_router: Router = heuristic_router or Router(
+            type="concept-query",
+            logic="fallback: default to knowledge base routing",
+            question=question_text,
+        )
+
+        allowed_types: set[str] = {
+            "general-query",
+            "additional-query",
+            "concept-query",
+            "T&L-generation",
+            "project-generation",
+            "rubric-generation",
+            "image-query",
+            "file-query",
+        }
+        raw_response = ""
+        try:
+            raw_response = await model.ainvoke(messages)
+        except Exception as exc:
+            logger.warning("Router LLM failed: %s. Falling back to concept-query.", exc)
+            logger.error(f"！！！路由解析核心报错: {type(exc).__name__}: {exc}")
+
+            try:
+                debug_resp = await model.ainvoke(messages)
+                logger.info(f"--- 模型原始回帖 (Debug) ---: {debug_resp.content}")
+            except:
+                logger.warning("连原始回帖都拿不到，请检查网络或 API Key")
+
+        raw_response =  {"type":raw_response.content if raw_response.content in allowed_types else "general-query"}
+        response = raw_response if isinstance(raw_response, Router) else Router.model_validate(raw_response)
+        router_type = response.type
+        logic = response.logic or ""
+
+        if not router_type or router_type not in allowed_types:
+            logger.warning(
+                "Router returned invalid type `%s`; applying heuristic fallback.", router_type
+            )
+            heuristic_router = _heuristic_router(question_text)
+            if heuristic_router:
+                sanitized = heuristic_router
+                if not sanitized.logic:
+                    sanitized.logic = logic or ""
+                classier["type"] = sanitized.type
+            else:
+                classier["type"] = "concept-query"
+            # return {
+            #     "router": Router(
+            #         type="concept-query",
+            #         logic=logic or "fallback: invalid router output",
+            #         question=question_text,
+            #     )
+            # }
+
+        sanitized_router = Router(
+            type=router_type,
+            logic=logic,
+            question=response.question or question_text,
+            decision=response.decision,
+            confidence=response.confidence,
+            reasoning=response.reasoning,
+        )
+        classier["type"] = sanitized_router.type
+        classifiers.append(classier)
 
     # Heuristic router is only used when the LLM output is invalid (handled above).
-    logger.info(f"Analyze user query type completed, result: {sanitized_router}")
-    return {"router": sanitized_router,
+    logger.info(f"Analyze user query type completed, result: {classifiers}")
+
+    if validate_generation_tasks(classifiers)== "fail":    #TODO:此处逻辑没有写清楚
+        sanitized_router.type = "general-query"
+    if validate_generation_tasks(classifiers)== "T&L-generation":
+        sanitized_router.type = "T&L-generation"
+    if validate_generation_tasks(classifiers)== "rubric-generation":
+        sanitized_router.type = "rubric-generation"
+
+    return {
+            "messages": AIMessage(content=str(classifiers)),
+            "router": sanitized_router,
             "question": sanitized_router.question,}
 
 
@@ -397,7 +466,7 @@ async def dummy_node(state: AgentState) -> Dict:
 # 在 builder 中这样注册
 # Literal[
 #     "respond_to_general_query", "get_additional_info", "create_concept_query", "create_tl_generation", "create_image_query", "create_file_query", "create_project_generation", "create_rubric_generation"]:
-
+builder.add_node("query_rewrite", query_rewrite)
 builder.add_node("router", analyze_and_route_query)
 builder.add_node("respond_to_general_query", respond_to_general_query)
 builder.add_node("create_concept_query", create_concept_query)
@@ -410,8 +479,9 @@ builder.add_node("get_additional_info", get_additional_info)
 
 
 # 添加边
-builder.add_edge(START, "router")
-builder.add_conditional_edges("router", route_query)
+builder.add_edge(START, "query_rewrite")
+builder.add_edge("query_rewrite", "router")
+builder.add_edge("router", END)
 
 graph = builder.compile(checkpointer=checkpointer)
 

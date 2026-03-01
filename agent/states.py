@@ -100,7 +100,7 @@ class AgentState(InputState):
     """Populated by the retriever. This is a list of documents that the agent can reference."""
     documents: list[str] = field(default_factory=list)
     """Documents retrieved from the knowledge base."""
-    question: str = field(default_factory=str)
+    questions: list[str] = field(default_factory=list)
     answer: str = field(default_factory=str)
     hallucination: GradeHallucinations = field(default_factory=lambda: GradeHallucinations(binary_score="0"))
     sources: list = field(default_factory=list)
