@@ -234,52 +234,75 @@ async def tl_rewrite_node(state: AgentState):
     }
 
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+# 创建一个全局线程池，用于处理 CPU 密集型的 Embedding 计算
+executor = ThreadPoolExecutor(max_workers=10)
+
 
 async def tl_retrieve_node(state: AgentState):
-    documents=[]
     logger.info(f"Divided questions: {state.questions}")
-    for query_text in state.questions:
 
+    # --- 1. 资源预加载（移出循环） ---
+    connections.connect("default", host="localhost", port="19530")
+    collection = Collection("EducationModules")
+    collection.load()
 
-        queries=query_text.split("|")
-        logger.info(f"\n正在查询内容: '{query_text}'，请耐心等待")
-        # 1. 连接 Milvus
-        connections.connect("default", host="localhost", port="19530")
-        collection = Collection("EducationModules")
-        collection.load()
+    # 模型加载在外面，避免并行时内存炸裂
+    dense_embeddings = HuggingFaceEmbeddings(
+        model_name="BAAI/bge-small-zh-v1.5",
+        model_kwargs={'device': 'cpu'},
+        encode_kwargs={'normalize_embeddings': True}
+    )
 
-        dense_embeddings = HuggingFaceEmbeddings(
-            model_name="BAAI/bge-small-zh-v1.5",
-            model_kwargs={'device': 'cpu'},
-            encode_kwargs={'normalize_embeddings': True}
-        )
+    async def single_search(query: str):
+        """最底层的单个 query 查询逻辑"""
+        # 使用线程池运行同步的 embed_query，避免阻塞事件循环
+        loop = asyncio.get_event_loop()
+        query_vector = await loop.run_in_executor(executor, dense_embeddings.embed_query, query)
 
-        for query in queries:
-
-            query_vector = dense_embeddings.embed_query(query)
-            metric_type="COSINE"
-            search_params = {"metric_type": metric_type, "params": {"nprobe": 10}}
-            results = collection.search(
-            data=[query_vector],  # 用第一条数据的向量查自己
+        search_params = {"metric_type": "COSINE", "params": {"nprobe": 10}}
+        # Milvus 的 search 方法在 python SDK 中主要是同步的，如果量大也可以放进 executor
+        results = collection.search(
+            data=[query_vector],
             anns_field="ilo_vector",
             param=search_params,
             limit=3,
             output_fields=["ilo", "tc"]
-            )
+        )
 
-            for hits in results:
-                for hit in hits:
-                    logger.info("-" * 30)
-                    logger.info(f"{metric_type}: {hit.distance:.4f}")
-                    if hit.distance >=5:
-                        continue
-                    logger.info(f"ILO 内容: {hit.entity.get('ilo')}")
-                    logger.info(f"TC 内容: {hit.entity.get('tc')}...") # 截取前100字展示
-                    documents.append({"ILO":hit.entity.get('ilo'),
-                                  "TC":hit.entity.get('tc')})
-    logger.info("查到的文档："+str(documents))
+        local_docs = []
+        for hits in results:
+            for hit in hits:
+                if hit.distance >= 5:  # 注意：COSINE 距离 5 可能意味着不匹配，请确认你的阈值
+                    continue
+                local_docs.append({
+                    "ILO": hit.entity.get('ilo'),
+                    "TC": hit.entity.get('tc')
+                })
+        logger.info(f"Results: {query}的查询结果-------"+str(local_docs))
+        return local_docs
+
+    async def process_question_group(question_text: str):
+        """处理单个 question 及其内部的 | 拆分并行"""
+        queries = [q.strip() for q in question_text.split("|") if q.strip()]
+        # --- 内层并行：针对拆分出的 queries ---
+        tasks = [single_search(q) for q in queries]
+        results = await asyncio.gather(*tasks)
+        # 展平结果列表
+        return [doc for sublist in results for doc in sublist]
+
+    # --- 外层并行：针对 state.questions ---
+    outer_tasks = [process_question_group(q_text) for q_text in state.questions]
+    all_results = await asyncio.gather(*outer_tasks)
+
+    # 汇总所有结果并去重（可选）
+    documents = [doc for sublist in all_results for doc in sublist]
+
+    logger.info(f"查到的文档总数：{len(documents)}")
+
     return {
-        #"is_info_sufficient": True,
         "messages": state.messages,
         "questions": state.questions,
         "documents": documents
@@ -287,9 +310,10 @@ async def tl_retrieve_node(state: AgentState):
 
 
 
-async def tl_generate_tc_node(state: TLState):
+async def tl_generate_tc_node(state: AgentState):
 
     context_str = json.dumps(state.documents, ensure_ascii=False, indent=2)
+    logger.info(f"查到的文档：Context: {context_str}")
 
     if not state.documents:
         context_str = "暂无相关的历史案例可供参考。"
@@ -303,11 +327,18 @@ async def tl_generate_tc_node(state: TLState):
         tags=["additional_info"]
     )
 
-    response = await model.ainvoke([{"role": "system", "content": TL_TC_GNERATER_SYSTEM_PROMPT},
-                                    {"role":"human","content": "以下是用户的ILO："+ TL_TC_GENRATER_USER_PROMPT.format(user_ilo=state.question,
+    async def process_question(question):
+        response = await model.ainvoke([{"role": "system", "content": TL_TC_GNERATER_SYSTEM_PROMPT},
+                                    {"role":"human","content": "以下是用户的ILO："+ TL_TC_GENRATER_USER_PROMPT.format(user_ilo=question,
                                                                                                             retrieved_context=context_str)}] )
+        return response.content
 
-    return {"messages": response,
+    tasks = [process_question(q) for q in state.questions]
+    answer_list = await asyncio.gather(*tasks)
+
+    answer = "\n\n".join(answer_list)
+
+    return {"messages": answer,
             "current_task": None,
             "current_count": 0,
             "is_info_sufficient":False

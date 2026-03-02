@@ -152,6 +152,10 @@ import os
 from pathlib import Path
 from typing import List, Optional, Sequence
 
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from API.tcgenerate import tc_router
 from agent.build import graph
 from agent.states import InputState
 from agent.utils import new_uuid
@@ -167,6 +171,7 @@ from langgraph.types import Command
 import asyncio
 import time
 import builtins
+import uvicorn
 
 thread = {"configurable": {"thread_id": new_uuid()}}
 
@@ -227,58 +232,68 @@ def _stringify_content(content: object) -> str:
     return str(content)
 
 
-async def process_query(query: str) -> None:
-    state_snapshot = graph.get_state(thread)
-    existing_messages = list(state_snapshot.values.get("messages", []))
-    messages_to_remove = _select_messages_to_remove(existing_messages)
-
-    removals = [
-        RemoveMessage(id=msg.id)
-        for msg in messages_to_remove
-        if getattr(msg, "id", None)
-    ]
-    human_message = HumanMessage(content=query)
-    input_messages: List[BaseMessage] = [*removals, human_message]
-    input_state = InputState(messages=input_messages)
-
-    async for chunk, metadata in graph.astream(
-        input=input_state,
-        stream_mode="messages",
-        config=thread,
-    ):
-        if metadata.get("langgraph_node") == "query_rewrite" or metadata.get("langgraph_node") == "router":
-            continue
-
-        text = _stringify_content(chunk.content)
-        if text and "research_plan" not in metadata.get("tags", []):
-            print(text, end="", flush=True)
-
-    latest_snapshot = graph.get_state(thread)
-    pending_tasks = latest_snapshot.tasks
-    if pending_tasks and len(pending_tasks[0].interrupts) > 0:
-        response = input('\n响应可能包含不确定信息。重试生成？如果是，按"y"：')
-        if response.lower() == 'y':
-            async for chunk, metadata in graph.astream(
-                Command(resume=response),
-                stream_mode="messages",
-                config=thread,
-            ):
-                if chunk.additional_kwargs.get("tool_calls"):
-                    print(chunk.additional_kwargs.get("tool_calls")[0]["function"].get("arguments"), end="")
-                if chunk.content:
-                    time.sleep(0.05)
-                    print(chunk.content, end="", flush=True)
-
-
-async def main() -> None:
-    input_func = builtins.input
-    query = input_func("> ")
-    # if query.strip().lower() == "q":
-    #     print("Exiting...")
-    #     break
-    await process_query(query)
+#async def process_query(query: str) -> None:
+    # state_snapshot = graph.get_state(thread)
+    # existing_messages = list(state_snapshot.values.get("messages", []))
+    # messages_to_remove = _select_messages_to_remove(existing_messages)
+    #
+    # removals = [
+    #     RemoveMessage(id=msg.id)
+    #     for msg in messages_to_remove
+    #     if getattr(msg, "id", None)
+    # ]
+    # human_message = HumanMessage(content=query)
+    # input_messages: List[BaseMessage] = [*removals, human_message]
+    # input_state = InputState(messages=input_messages)
+    #
+    # async for chunk, metadata in graph.astream(
+    #     input=input_state,
+    #     stream_mode="messages",
+    #     config=thread,
+    # ):
+    #     if metadata.get("langgraph_node") == "query_rewrite" or metadata.get("langgraph_node") == "router":
+    #         continue
+    #
+    #     text = _stringify_content(chunk.content)
+    #     if text and "research_plan" not in metadata.get("tags", []):
+    #         print(text, end="", flush=True)
+    #
+    # latest_snapshot = graph.get_state(thread)
+    # pending_tasks = latest_snapshot.tasks
+    # if pending_tasks and len(pending_tasks[0].interrupts) > 0:
+    #     response = input('\n响应可能包含不确定信息。重试生成？如果是，按"y"：')
+    #     if response.lower() == 'y':
+    #         async for chunk, metadata in graph.astream(
+    #             Command(resume=response),
+    #             stream_mode="messages",
+    #             config=thread,
+    #         ):
+    #             if chunk.additional_kwargs.get("tool_calls"):
+    #                 print(chunk.additional_kwargs.get("tool_calls")[0]["function"].get("arguments"), end="")
+    #             if chunk.content:
+    #                 time.sleep(0.05)
+    #                 print(chunk.content, end="", flush=True)
 
 
+# async def main() -> None:
+#     input_func = builtins.input
+#     query = input_func("> ")
+#     # if query.strip().lower() == "q":
+#     #     print("Exiting...")
+#     #     break
+#     await process_query(query)
+
+app = FastAPI(title="PBL 教案系统")
+# ✅ 将接口“注册”到 app 下
+app.include_router(tc_router)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # 开发环境可以用 "*"，生产环境建议写具体地址
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    #asyncio.run(main())
