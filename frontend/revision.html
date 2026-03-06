@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PBL 教案详情</title>
+    <link rel="stylesheet" href="https://lf3-cdn-tos.bytecdntp.com/cdn/expire-1-M/open-sans/8.0.0/css/open-sans.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        :root {
+            --lark-blue: #3370FF;
+            --lark-blue-hover: #1F55E6;
+            --text-main: #1F2329;
+            --text-desc: #8F959E;
+            --bg-body: #F5F6F7;
+            --bg-content: #FFFFFF;
+            --border-color: #DEE1E5;
+        }
+
+        body {
+            font-family: "PingFang SC", "Lark Emoji Font", "Microsoft YaHei", sans-serif;
+            background-color: var(--bg-body);
+            color: var(--text-main);
+            margin: 0;
+            padding: 40px 20px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .lark-container {
+            background-color: var(--bg-content);
+            width: 100%;
+            max-width: 900px;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(31, 35, 41, 0.05);
+            min-height: 600px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 20px;
+            margin-bottom: 20px;
+        }
+
+        h2.main-title { font-size: 24px; font-weight: 600; margin: 0; }
+
+        .btn-back {
+            background-color: transparent;
+            color: var(--lark-blue);
+            border: 1px solid var(--lark-blue);
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .btn-back:hover { background-color: rgba(51, 112, 255, 0.05); }
+
+        .tabs-container {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+
+        .tab-btn {
+            background-color: var(--bg-body);
+            color: var(--text-main);
+            border: 1px solid var(--border-color);
+            padding: 8px 18px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s ease-in-out;
+        }
+
+        .tab-btn:hover { border-color: var(--lark-blue); color: var(--lark-blue); }
+        .tab-btn.active {
+            background-color: var(--lark-blue);
+            color: #fff;
+            border-color: var(--lark-blue);
+            box-shadow: 0 2px 6px rgba(51, 112, 255, 0.3);
+        }
+
+        #final-content {
+            line-height: 1.8;
+            font-size: 16px;
+            animation: fadeIn 0.3s ease-in-out;
+            margin-bottom: 40px;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        #final-content h1, #final-content h2, #final-content h3 { color: var(--lark-blue); margin-top: 1.5em; }
+        #final-content code { background-color: #f0f0f0; padding: 2px 4px; border-radius: 3px; }
+        #final-content blockquote { border-left: 4px solid var(--lark-blue); margin: 0; padding-left: 15px; color: var(--text-desc); }
+
+        .suggestion-box {
+            border-top: 1px dashed var(--border-color);
+            padding-top: 20px;
+        }
+        .suggestion-title { font-size: 16px; font-weight: 600; margin-bottom: 12px; color: var(--text-main); }
+        .suggestion-input {
+            width: 100%; box-sizing: border-box; min-height: 100px; padding: 12px;
+            border: 1px solid var(--border-color); border-radius: 6px;
+            font-family: inherit; font-size: 14px; color: var(--text-main);
+            resize: vertical; transition: border-color 0.2s;
+        }
+        .suggestion-input:focus { outline: none; border-color: var(--lark-blue); }
+
+        .suggestion-actions {
+            margin-top: 12px;
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .btn-primary {
+            background-color: var(--lark-blue); color: #fff; border: none;
+            padding: 8px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; transition: background-color 0.2s;
+        }
+        .btn-primary:hover { background-color: var(--lark-blue-hover); }
+
+        .btn-secondary {
+            background-color: transparent; color: var(--lark-blue); border: 1px solid var(--lark-blue);
+            padding: 8px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; transition: all 0.2s;
+        }
+        .btn-secondary:hover { background-color: rgba(51, 112, 255, 0.05); }
+
+        .status-msg { font-size: 14px; color: #4CAF50; opacity: 0; transition: opacity 0.3s; }
+
+        .loading-box { text-align: center; padding-top: 100px; color: var(--text-desc); }
+        .spinner {
+            width: 40px; height: 40px; border: 4px solid #f3f3f3;
+            border-top: 4px solid var(--lark-blue); border-radius: 50%;
+            animation: spin 1s linear infinite; margin: 0 auto 20px;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+<div class="lark-container">
+    <div class="header">
+        <h2 class="main-title">PBL 教案生成详情</h2>
+        <button class="btn-back" onclick="window.location.href='index.html'">返回修改</button>
+    </div>
+
+    <div id="loading-view" class="loading-box">
+        <div class="spinner"></div>
+        <p>🚀 正在深度生成完整教案，请稍候...</p>
+    </div>
+
+    <div id="tabs-container" class="tabs-container" style="display: none;"></div>
+
+    <div id="content-wrapper" style="display: none;">
+        <div id="final-content"></div>
+
+        <div class="suggestion-box">
+            <div class="suggestion-title">📝 提出修改建议 (<span id="current-tab-name"></span>)</div>
+            <textarea id="suggestion-input" class="suggestion-input" placeholder="对当前部分有任何修改想法，请在此输入..."></textarea>
+            <div class="suggestion-actions">
+                <span id="save-status" class="status-msg"></span>
+                <button id="btn-stash-suggestion" class="btn-secondary">暂存</button>
+                <button id="btn-submit-suggestion" class="btn-primary">全部提交</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let currentActiveKey = "";
+    let suggestionsMap = {};
+    let originalData = {};
+
+    window.onload = async function() {
+        const taskId = localStorage.getItem('Task-ID');
+        const loadingView = document.getElementById('loading-view');
+        const tabsContainer = document.getElementById('tabs-container');
+        const contentWrapper = document.getElementById('content-wrapper');
+        const contentBox = document.getElementById('final-content');
+        const suggestionInput = document.getElementById('suggestion-input');
+        const currentTabNameLabel = document.getElementById('current-tab-name');
+
+        const btnStashSuggestion = document.getElementById('btn-stash-suggestion');
+        const btnSubmitSuggestion = document.getElementById('btn-submit-suggestion');
+        const saveStatus = document.getElementById('save-status');
+
+        if (!taskId || taskId === "null" || taskId === "undefined") {
+            loadingView.innerHTML = "❌ 未找到有效任务 ID，请返回首页。";
+            return;
+        }
+
+        try {
+            const response = await fetch(`http://127.0.0.1:8000/get-final-plan`, {
+                method: 'GET',
+                headers: { 'Content-Type': 'application/json', 'task_id': taskId }
+            });
+            const data = await response.json();
+
+            originalData = data;
+            loadingView.style.display = 'none';
+
+            if (data && Object.keys(data).length > 0) {
+                tabsContainer.style.display = 'flex';
+                contentWrapper.style.display = 'block';
+
+                let isFirst = true;
+
+                for (const [key, value] of Object.entries(data)) {
+                    suggestionsMap[key] = "";
+
+                    const btn = document.createElement('button');
+                    btn.className = 'tab-btn';
+                    btn.textContent = key;
+
+                    btn.onclick = function() {
+                        if (currentActiveKey) {
+                            suggestionsMap[currentActiveKey] = suggestionInput.value;
+                        }
+
+                        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                        this.classList.add('active');
+
+                        currentActiveKey = key;
+                        currentTabNameLabel.textContent = key;
+                        contentBox.innerHTML = marked.parse(value);
+                        suggestionInput.value = suggestionsMap[key];
+                    };
+
+                    tabsContainer.appendChild(btn);
+
+                    if (isFirst) {
+                        btn.click();
+                        isFirst = false;
+                    }
+                }
+            } else {
+                loadingView.style.display = 'block';
+                loadingView.innerHTML = "📭 教案内容为空。";
+            }
+
+        } catch (err) {
+            loadingView.innerHTML = "❌ 加载失败: " + err.message;
+        }
+
+        // 暂存按钮逻辑
+        btnStashSuggestion.onclick = function() {
+            if (!currentActiveKey) return;
+
+            suggestionsMap[currentActiveKey] = suggestionInput.value;
+
+            saveStatus.textContent = "已暂存!";
+            saveStatus.style.color = "#4CAF50";
+            saveStatus.style.opacity = '1';
+            setTimeout(() => { saveStatus.style.opacity = '0'; }, 2000);
+        };
+
+        // 提交按钮逻辑：发送所有 Tab 的建议
+        btnSubmitSuggestion.onclick = async function() {
+            if (!currentActiveKey) return;
+
+            // 提交前，先强制更新一下当前输入框的内容到字典中
+            suggestionsMap[currentActiveKey] = suggestionInput.value;
+
+            saveStatus.textContent = "正在提交...";
+            saveStatus.style.color = "#FF9800";
+            saveStatus.style.opacity = '1';
+
+            try {
+                const response = await fetch('http://127.0.0.1:8000/submit-suggestion', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    // 🔥 这里改成了把整个 suggestionsMap (所有建议) 发送给后端
+                    body: JSON.stringify({
+                        task_id: taskId,
+                        all_suggestions: suggestionsMap,      // 包含所有 Tab 输入的字典
+                        all_original_texts: originalData      // 包含所有原文案的字典
+                    })
+                });
+
+                if (response.ok) {
+                    saveStatus.textContent = "已提交全部修改!";
+                    saveStatus.style.color = "#4CAF50";
+                    setTimeout(() => { saveStatus.style.opacity = '0'; }, 2000);
+                } else {
+                    throw new Error('网络响应异常');
+                }
+            } catch (err) {
+                console.error("提交失败:", err);
+                saveStatus.textContent = "提交失败，请重试";
+                saveStatus.style.color = "#F44336";
+            }
+        };
+    };
+</script>
+
+</body>
+</html>

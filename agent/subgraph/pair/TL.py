@@ -188,8 +188,10 @@ def decide_next_step(state: TLState):
 async def tl_rewrite_node(state: AgentState):
 
     q=["Deliver a concise, structured progress update for assigned tasks, clearly articulating completion status, obstacles and potential solutions in line with the group’s project timeline.",
-       "Identify specific interdisciplinary knowledge/resource gaps in their project team through guided discussion, and link gaps to current project progress bottlenecks.",
-       "Apply practical strategies for knowledge complementation and resource sharing in interdisciplinary teams, and co-create a group actionable plan for immediate implementation."]
+       ]
+
+    a="Identify specific interdisciplinary knowledge/resource gaps in their project team through guided discussion, and link gaps to current project progress bottlenecks.",
+    b="Apply practical strategies for knowledge complementation and resource sharing in interdisciplinary teams, and co-create a group actionable plan for immediate implementation."
     state.questions=q
     if state.current_count >= 2:
         return {"messages": AIMessage(content="抱歉老师，录入的信息暂无法识别。已为您返回主菜单，请尝试重新描述您的的要求。"),
@@ -313,7 +315,7 @@ async def tl_retrieve_node(state: AgentState):
 async def tl_generate_tc_node(state: AgentState):
 
     context_str = json.dumps(state.documents, ensure_ascii=False, indent=2)
-    logger.info(f"查到的文档：Context: {context_str}")
+    #logger.info(f"查到的文档：Context: {context_str}")
 
     if not state.documents:
         context_str = "暂无相关的历史案例可供参考。"
@@ -344,6 +346,16 @@ async def tl_generate_tc_node(state: AgentState):
             "is_info_sufficient":False
             }
 
+    def generate_background(state: AgentState):
+        # 逻辑：基于 state["tc_task"] 生成背景
+        background = llm.invoke(...)
+        return {"task_background": background}
+
+    def generate_rubric(state: AgentState):
+        # 逻辑：基于 state["tc_task"] 生成 rubric
+        rubric = llm.invoke(...)
+        return {"rubric": rubric}
+
 
 
 tl_workflow = StateGraph(AgentState)
@@ -354,15 +366,17 @@ tool_node = ToolNode(tltools)
 tl_workflow.add_node("retrieve", tl_retrieve_node)
 tl_workflow.add_edge(START, "rewrite")
 
-# tl_workflow.add_conditional_edges(
-#     "analyze",
-#     decide_next_step,
-#     {
-#         "generate": "rewrite",
-#         "wait_for_user": END  # 这里的 END 会把 analyze 节点生成的追问发给用户
-#     }
-# )
-tl_workflow.add_edge("rewrite", "retrieve")
+# builder.add_node("generate_tc", generate_tc_task)
+# builder.add_node("gen_background", generate_background)
+# builder.add_node("gen_rubric", generate_rubric)
+# builder.add_node("final_refine", finalize_lesson_plan)
+#
+# tl_workflow.add_edge("generate_tc", "gen_background")
+# tl_workflow.add_edge("generate_tc", "gen_rubric")
+# tl_workflow.add_edge("gen_background", "final_refine")
+# tl_workflow.add_edge("gen_rubric", "final_refine")
+tl_workflow.add_edge("rewrite",  "retrieve")
 tl_workflow.add_edge("retrieve", "generate")
 tl_workflow.add_edge("generate", END)
-tl_graph = tl_workflow.compile()
+memory = MemorySaver()
+tl_graph = tl_workflow.compile(checkpointer=memory)
