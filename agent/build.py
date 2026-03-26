@@ -455,7 +455,7 @@ async def create_rubric_generation(
 checkpointer = MemorySaver()
 
 # 定义状态图
-builder = StateGraph(AgentState, input=InputState)
+builder = StateGraph(AgentState)
 # 添加节点
 async def dummy_node(state: AgentState) -> Dict:
     """占位节点：在正式逻辑写完前，先确保图能连通"""

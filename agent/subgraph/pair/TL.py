@@ -62,10 +62,8 @@ TL_TC_GNERATER_SYSTEM_PROMPT = """
 
 ### 核心工作流
 1. **分析输入**：识别用户提供的 ILO 需要的学会的技能和达到何种目的
-
-3. **生成格式**：你的输出必须是Json列表[{"ILO":"","TC":""},{"ILO":"","TC":""}]
-4. **内容生成**：如果有多个ILO，请为每个ILO都写一个TC，每个ILO和TC为一个Json
-
+2. **输出注意**：每个步骤或者每个序号之间要用空行隔开，使格式好看，使用中文，只用输出教学内容（TC）
+3. **输出格式**：注意输出时格式的美观程度，要用md格式分割好小标题和bullet point 
 ### 教学内容 (TC) 编写模板如下，请严格模仿以下三个示例的格式、语气和逻辑：
 ### Example 1
 {"ILO": "Demonstrate effective use of Feishu for tracking milestones, tasks, and progress","TC": " Progress & PM Practice Assessment- Step 1: Feishu Workspace Walkthrough. Each group shares their Feishu project workspace (screen share) to demonstrate: 1) Milestone tracking, 2) Task assignment, 3) Progress updates (e.g., completed vs. in-progress tasks from the 2-week plan). Instructor feedback focuses on Feishu optimization.- Step 2: Progress Check. Groups report on 2-week plan achievements: 1) Completed tasks, 2) Delays (if any) + reasons, 3) Alignment with revised proposal objectives. "}
@@ -73,8 +71,9 @@ TL_TC_GNERATER_SYSTEM_PROMPT = """
 {"ILO": "Identify key stakeholders, map them by influence/interest, and articulate their (and the group’s) potential roles, motivations, and contributions to the project.Transferable Skills: Stakeholder Analysis, Teamwork (Role Alignment)", "TC": "Map Stakeholders & Articulate Roles Identify key stakeholders (e.g., community residents, local businesses, NGOs) using Assignment 3’s guidance.Create a shared stakeholder map (categorize by influence/interest) and detail: their roles (e.g., “Residents provide usage feedback”), motivations (e.g., “Businesses want to cut waste costs”), and the group’s role in engaging them (e.g., “We’ll survey residents to validate solutions”)."}}
 ### Example 3
 {"ILO": "Define SMART project objectives, coherent group tasks, and feasible milestones, ensuring objectives align with expected outcomes and the execution plan is resource- and time-realistic.", "TC": "SMART Objectives, Milestones & Feasibility- Workshop on Rubric 1.3 (Project Objectives & Outcomes):1. Teach SMART criteria with examples: Weak: \"Improve digitalization\" → Strong: \"Develop a free AI-driven inventory tool for 50+ small businesses in Guangzhou by May 2027 (measurable, time-bound)\".2. Link objectives to expected outcomes (e.g., \"Objective 1 → Outcome: Prototype tested with 10 entrepreneurs; 80% report time savings\").- Workshop on Rubric 1.4 (Feasibility & Milestones):1. Milestone best practices: (e.g., \"Jan 2026: Complete literature review on small business digitalization gaps\").2. Feasibility check: Analyze resources (expertise, budget) and risks (e.g., \"Lack of business user access → Mitigation: Partner with local chambers of commerce\")."}
-
 """
+
+
 TL_TC_GENRATER_USER_PROMPT="""
 ### 当前任务输入
 - 用户提供的 ILO: {user_ilo}
@@ -186,13 +185,12 @@ def decide_next_step(state: TLState):
     return "wait_for_user"
 
 async def tl_rewrite_node(state: AgentState):
-
     q=["Deliver a concise, structured progress update for assigned tasks, clearly articulating completion status, obstacles and potential solutions in line with the group’s project timeline.",
        ]
 
     a="Identify specific interdisciplinary knowledge/resource gaps in their project team through guided discussion, and link gaps to current project progress bottlenecks.",
     b="Apply practical strategies for knowledge complementation and resource sharing in interdisciplinary teams, and co-create a group actionable plan for immediate implementation."
-    state.questions=q
+
     if state.current_count >= 2:
         return {"messages": AIMessage(content="抱歉老师，录入的信息暂无法识别。已为您返回主菜单，请尝试重新描述您的的要求。"),
             "current_task": None,
@@ -323,7 +321,7 @@ async def tl_generate_tc_node(state: AgentState):
 
     model = ChatOpenAI(
         openai_api_key=settings.LLM_API_KEY,
-        model_name=settings.LLM_MODEL,
+        model_name="deepseek-reasoner",
         openai_api_base=settings.LLM_BASE_URL,
         temperature=0.3,  # 降低随机性，保证引导的专业性
         tags=["additional_info"]
@@ -332,7 +330,10 @@ async def tl_generate_tc_node(state: AgentState):
     async def process_question(question):
         response = await model.ainvoke([{"role": "system", "content": TL_TC_GNERATER_SYSTEM_PROMPT},
                                     {"role":"human","content": "以下是用户的ILO："+ TL_TC_GENRATER_USER_PROMPT.format(user_ilo=question,
-                                                                                                            retrieved_context=context_str)}] )
+                                                                                                            retrieved_context=context_str)
+                                    +"\n以下是班级信息：" + state.class_info
+                                     + "\n以下是课程信息：" + state.course_info
+                                     }] )
         return response.content
 
     tasks = [process_question(q) for q in state.questions]
@@ -340,29 +341,176 @@ async def tl_generate_tc_node(state: AgentState):
 
     answer = "\n\n".join(answer_list)
 
-    return {"messages": answer,
+    logger.info(answer)
+
+    return {
             "current_task": None,
             "current_count": 0,
-            "is_info_sufficient":False
+            "is_info_sufficient":False,
+            "answer": answer
             }
 
-    def generate_background(state: AgentState):
-        # 逻辑：基于 state["tc_task"] 生成背景
-        background = llm.invoke(...)
-        return {"task_background": background}
+async def tl_generate_scenario_node(state: AgentState):
+    """
+    场景生成节点：基于生成的 TC 和其他上下文信息，生成具体的教学场景描述
+    """
+    logger.info(f"Generating scenario for questions: {state.questions}")
 
-    def generate_rubric(state: AgentState):
-        # 逻辑：基于 state["tc_task"] 生成 rubric
-        rubric = llm.invoke(...)
-        return {"rubric": rubric}
+    model = ChatOpenAI(
+        openai_api_key=settings.LLM_API_KEY,
+        model_name="deepseek-reasoner",
+        openai_api_base=settings.LLM_BASE_URL,
+        temperature=0.3,
+        tags=["scenario_generation"]
+    )
 
+    # 场景生成的系统提示
+    scenario_system_prompt = """你是一名 PBL 教学设计专家。你的任务是基于已生成的教学内容（TC）和课程信息，
+为老师生成一个具体、生动、可操作的教学场景描述，包括：
+
+1. **场景设置**：这堂课/项目应该在什么样的环境和情境中进行
+2. **学生角色**：学生在这个场景中扮演什么角色
+3. **内容限制**：只需要包含场景设置与学生角色，不用加其他额外内容
+3. **输出格式**：注意输出时格式的美观程度，要用md格式分割好小标题和bullet point 
+
+
+
+示例：
+    Scenario-Based Problem Background
+In the previous session, you explored the challenges of the special education
+scenario at Qihui School. Applied the AEIOU Framework for User-Centric Research.
+Now that you have formed a formal interdisciplinary team, the challenge is to
+transition from a broad understanding of special education to a specific, actionable
+project focus. Which specific stakeholder's needs, be it the teacher managing a 20-
+minute settling period, a student with severe intellectual disabilities, or a parent
+seeking vocational hope, will your team prioritize? How do these stakeholders
+influence one another, and where does the most critical "pain point" lie?
+
+Furthermore, simply identifying a problem is not enough; you must prepare to
+validate your assumptions in the real world. Before you step into the classrooms of
+Qihui School in the next session, you need a rigorous field research plan. How will
+you structure your interviews to move beyond surface-level answers? What specific
+questions must you ask to uncover the "unspoken" needs of students who struggle
+with language expression? This session requires your team to align your diverse
+professional backgrounds to define your project’s core problem and build the
+roadmap for your upcoming immersive research. 
+
+Role Assignment (Same for All Groups, Broad Granularity)
+• Group Leader: Leads the team to confirm the core problem and task division
+of this session, manage the project and coordinates the completion and submission
+of required documents.
+• Coordinator: Assists in organizing team collaboration, ensures equal
+participation of members, and facilitates the integration of diverse viewpoints.
+• Note Taker: Records the task division, collect, document and submit group
+related deliveries of each session.
+• All Group Members: Collaboratively complete shared tasks of each session
+and deliver to Note Taker for collective submission. Share all research and analysis
+tasks."""
+
+    tc_content = state.answer  # TC 内容来自 generate 节点的输出
+    class_info = state.class_info or "未提供班级信息"
+    course_info = state.course_info or "未提供课程信息"
+
+    # 只处理一个问题，不需要并发
+    response = await model.ainvoke([
+        {
+            "role": "system",
+            "content": scenario_system_prompt
+        },
+        {
+            "role": "human",
+            "content": f"""基于以下信息生成教学场景：
+
+【课程信息】
+{course_info}
+
+【班级信息】
+{class_info}
+
+【教学内容】
+{tc_content}
+
+请为这个内容生成详细的教学场景。"""
+        }
+    ])
+
+    logger.info(f"Scenario generation completed: {response.content}")
+
+    return {
+        "messages": [AIMessage(content=response.content)],
+        "scenario": response.content
+    }
+
+async def tl_generate_deliverable_node(state: AgentState):
+    """
+    可交付物生成节点：基于生成的 TC 和场景信息，总结成 1-2 个可提交的交付物
+    """
+    logger.info(f"Generating deliverables for questions: {state.questions}")
+
+    model = ChatOpenAI(
+        openai_api_key=settings.LLM_API_KEY,
+        model_name="deepseek-reasoner",
+        openai_api_base=settings.LLM_BASE_URL,
+        temperature=0.3,
+        tags=["deliverable_generation"]
+    )
+
+    # 可交付物生成的系统提示
+    deliverable_system_prompt = """你是一名 PBL 教学设计专家。你的任务是基于已生成的教学内容（TC）和教学场景，
+为老师总结出 2 个左右具体的可交付物（deliverables），这些交付物应该是学生可以实际提交的东西。
+
+### 可交付物要求：
+1. **数量**：2 个左右交付物
+2. **类型**：可以是 map（思维导图）、report（报告）、presentation（演示）、plan（计划）等
+3. **具体性**：每个交付物要有明确的名称、格式要求和提交标准
+4. **可操作性**：学生能够实际完成并提交
+5. **输出格式**：注意输出时格式的美观程度，要用md格式分割好小标题和bullet point  
+
+
+
+### 示例输出：
+Deliverables (Non assessment)
+• Identified Challenges (Individual): Canvas post with core challenge identified.
+• AEIOU Framework Analysis (Individual): Completed AEIOU form analyzing the independently prioritized special education scenarios.
+}"""
+
+    tc_content = str(state.answer)  # TC 内容来自 generate 节点的输出
+    scenario_content = str(state.scenario)  # 场景内容来自 scenario 节点的输出
+
+    response = await model.ainvoke([
+        {
+            "role": "system",
+            "content": deliverable_system_prompt
+        },
+        {
+            "role": "human",
+            "content": f"""基于以下信息生成可交付物：
+
+
+【教学内容 (TC)】
+{tc_content}
+
+【教学场景】
+{scenario_content}
+
+请为这个教学设计生成 2 个左右具体的可交付物。"""
+        }
+    ])
+
+    logger.info(f"Deliverable generation completed: {response.content}")
+
+    return {
+        "deliverables": response.content
+    }
 
 
 tl_workflow = StateGraph(AgentState)
 #tl_workflow.add_node("analyze", tl_analyze_node)
 tl_workflow.add_node("generate", tl_generate_tc_node)
 tl_workflow.add_node("rewrite", tl_rewrite_node)
-tool_node = ToolNode(tltools)
+tl_workflow.add_node("scenario", tl_generate_scenario_node)
+tl_workflow.add_node("deliverable", tl_generate_deliverable_node)
+# tool_node = ToolNode(tltools)
 tl_workflow.add_node("retrieve", tl_retrieve_node)
 tl_workflow.add_edge(START, "rewrite")
 
@@ -377,6 +525,8 @@ tl_workflow.add_edge(START, "rewrite")
 # tl_workflow.add_edge("gen_rubric", "final_refine")
 tl_workflow.add_edge("rewrite",  "retrieve")
 tl_workflow.add_edge("retrieve", "generate")
-tl_workflow.add_edge("generate", END)
+tl_workflow.add_edge("generate", "scenario")
+tl_workflow.add_edge("scenario", "deliverable")
+tl_workflow.add_edge("deliverable", END)
 memory = MemorySaver()
 tl_graph = tl_workflow.compile(checkpointer=memory)

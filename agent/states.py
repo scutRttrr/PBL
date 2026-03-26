@@ -107,3 +107,9 @@ class AgentState(InputState):
     """Sources from knowledge base queries."""
     current_task: str = ""
     current_count: int = 0
+    class_info: Optional[str] = ""
+    course_info: Optional[str] = ""
+    scenario: str = field(default_factory=list)
+    """Teaching scenario generated based on TC and course information."""
+    deliverables: str = field(default_factory=list)
+    """Deliverables generated based on TC and scenario information."""

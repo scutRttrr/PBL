@@ -52,7 +52,8 @@ async def generate_tc(request: TCRequest):
         try:
             # --- 关键逻辑修改点 ---
             # 如果有记忆，传入 None 表示续传；如果没有记忆，传入初始化 questions
-            input_data = None if has_memory else {"questions": request.questions}
+            input_data = None if has_memory else {"questions": request.questions,"class_info": request.class_info, "course_info": request.course_info}
+            print(input_data)
 
             if has_memory:
                 yield f"data: {json.dumps({'event_type': 'info', 'content': '📂 正在恢复之前的生成进度...'})}\n\n"
@@ -164,12 +165,25 @@ async def generate_tc(request: TCRequest):
 @tc_router.get("/get-final-plan")
 async def revise_tc(task_id: Optional[str] = Header(None,convert_underscores=False)):
     print(task_id)
+    content_dict = {"错误": "未找到对应的教学task，请确认Task-ID是否正确，或者教学task是否已生成完成"}
     state=""
     if task_id:
 
         # 2. 构造 LangGraph 所需的 config
         config = {"configurable": {"thread_id": task_id}}
-        state = graph.get_state(config)
-        print(state)
+        # 1. 先获取快照
+        snapshot = graph.get_state(config)
 
-    return {"TC": "这里是你的教案内容....","background":"这是项目的背景"*50,"rubric":"这是rubric"}
+        # 2. 获取数据字典
+        state_values = snapshot.values  # 这是一个 dict
+
+        # 3. 使用字典方式取值
+        content_dict = {
+            "Scenario": state_values.get("scenario", ""),
+            "Tasks": state_values.get("answer", ""),
+            "Deliverables": state_values.get("deliverables", ""),
+
+        }
+
+
+    return content_dict
